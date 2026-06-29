@@ -2,7 +2,7 @@ var Marmota = {};
 
 Marmota.id = "marmota";
 Marmota.name = "Marmota";
-Marmota.version = "0.1.1";
+Marmota.version = "0.1.2";
 Marmota.icon = "M";
 Marmota.description = "Read public Spanish comics from Marmota.";
 Marmota.contentType = "comics";
@@ -181,6 +181,11 @@ Marmota._titleFromPath = function(path) {
     .replace(/\b([a-z])/g, function(match) {
       return match.toUpperCase();
     });
+};
+
+Marmota._seriesBaseSlug = function(seriesSlug) {
+  var slug = String(seriesSlug || "").replace(/\/+$/g, "");
+  return slug.replace(/-(?:19|20)[0-9]{2}$/i, "");
 };
 
 Marmota._isBlockedHtml = function(html) {
@@ -689,6 +694,112 @@ Marmota._sortChapterList = function(chapters) {
   });
 };
 
+Marmota._candidateIssuePaths = function(seriesPath, seriesSlug, number) {
+  var base = this._seriesBaseSlug(seriesSlug);
+  var prefixes = [];
+  if (base) prefixes.push(base);
+  if (seriesSlug && seriesSlug !== base) prefixes.push(seriesSlug);
+
+  var paths = [];
+  var seen = {};
+  var root = this._pathFromUrl(seriesPath);
+  if (!root.endsWith("/")) root += "/";
+
+  for (var i = 0; i < prefixes.length; i += 1) {
+    var candidates = [
+      root + prefixes[i] + "-" + number + "/",
+      root + prefixes[i] + "-" + String(number).padStart(2, "0") + "/",
+    ];
+    for (var j = 0; j < candidates.length; j += 1) {
+      if (!seen[candidates[j]]) {
+        seen[candidates[j]] = true;
+        paths.push(candidates[j]);
+      }
+    }
+  }
+
+  return paths;
+};
+
+Marmota._chapterTitleFromHtml = function(html, fallback) {
+  var title = this._firstTextMatch(html, [
+    /<h1\b[^>]*>([\s\S]*?)<\/h1>/i,
+    /<h2\b[^>]*>([\s\S]*?)<\/h2>/i,
+    /<title\b[^>]*>([\s\S]*?)<\/title>/i,
+  ]) || this._metaContent(html, "og:title") || fallback;
+  title = title.replace(/\s*-\s*Marmota(?:\s+Comics)?\s*$/i, "").trim();
+  return title || fallback;
+};
+
+Marmota._isIssuePageHtml = function(html, seriesSlug, number) {
+  var text = String(html || "").toLowerCase();
+  if (!text) return false;
+  if (this._isBlockedHtml(text)) return false;
+  var baseSlug = this._seriesBaseSlug(seriesSlug).toLowerCase();
+  var seriesNeedles = [
+    String(seriesSlug || "").toLowerCase(),
+    baseSlug,
+    baseSlug.replace(/-/g, " "),
+  ].filter(function(value) {
+    return !!value;
+  });
+  var hasSeriesMarker = false;
+  for (var i = 0; i < seriesNeedles.length; i += 1) {
+    if (text.indexOf(seriesNeedles[i]) !== -1) {
+      hasSeriesMarker = true;
+      break;
+    }
+  }
+  if (!hasSeriesMarker) {
+    return false;
+  }
+  var title = this._chapterTitleFromHtml(html, "").toLowerCase();
+  var numberText = String(number);
+  return title.indexOf("#" + numberText) !== -1 ||
+    new RegExp("(?:^|[^0-9])" + numberText + "(?:[^0-9]|$)").test(title) ||
+    text.indexOf("rel=\"next\"") !== -1 ||
+    text.indexOf("rel='next'") !== -1 ||
+    text.indexOf("> next <") !== -1 ||
+    text.indexOf(">next<") !== -1 ||
+    text.indexOf("> prev <") !== -1 ||
+    text.indexOf(">prev<") !== -1;
+};
+
+Marmota._probeNumberedChapters = async function(seriesPath, seriesSlug) {
+  var chapters = [];
+  var maxMisses = 4;
+  var misses = 0;
+  var maxNumber = 80;
+
+  for (var number = 1; number <= maxNumber && misses < maxMisses; number += 1) {
+    var paths = this._candidateIssuePaths(seriesPath, seriesSlug, number);
+    var found = null;
+    for (var i = 0; i < paths.length; i += 1) {
+      var url = this._absUrl(paths[i]);
+      var html = await this._fetchText(url, this._absUrl(seriesPath));
+      if (this._isIssuePageHtml(html, seriesSlug, number)) {
+        found = {
+          id: this._pathFromUrl(paths[i]),
+          title: this._chapterTitleFromHtml(html, this._titleFromPath(paths[i])),
+          chapterNumber: number,
+          url: url,
+          _sourceIndex: chapters.length,
+        };
+        break;
+      }
+    }
+
+    if (found) {
+      chapters.push(found);
+      misses = 0;
+    } else {
+      misses += 1;
+    }
+  }
+
+  return chapters;
+};
+
 Marmota.getChapters = async function(mangaId) {
   var seriesPath = this._pathFromUrl(mangaId);
   if (!this._isSeriesPath(seriesPath)) seriesPath = "/comic/" + String(mangaId || "").replace(/^\/+|\/+$/g, "") + "/";
@@ -701,6 +812,9 @@ Marmota.getChapters = async function(mangaId) {
   if (chapters.length === 0) {
     var ajaxHtml = await this._fetchAjaxChaptersHtml(html, url);
     if (ajaxHtml) chapters = this._parseChaptersFromHtml(ajaxHtml, seriesPath, seriesSlug);
+  }
+  if (chapters.length === 0) {
+    chapters = await this._probeNumberedChapters(seriesPath, seriesSlug);
   }
 
   return this._sortChapterList(chapters);

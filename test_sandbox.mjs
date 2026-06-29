@@ -65,6 +65,26 @@ const dynamicAjaxHtml = `
   <li><a href="/comic/dynamic-comic/chapter-1/">Chapter 1</a></li>
 </ul>`;
 
+const absoluteDetailsHtml = `
+<html>
+  <body>
+    <h1>Absolute Batman (2024)</h1>
+    <p>Absolute Batman is listed publicly, but no chapter anchors are rendered here.</p>
+  </body>
+</html>`;
+
+const absoluteIssueHtml = (number) => `
+<html>
+  <head>
+    <title>Absolute Batman #${number} - Marmota</title>
+    <link rel="canonical" href="https://marmota.me/comic/absolute-batman-2024/absolute-batman-${number}/">
+  </head>
+  <body>
+    <h1>Absolute Batman #${number}</h1>
+    <a rel="next" href="/comic/absolute-batman-2024/absolute-batman-${number + 1}/">Next</a>
+  </body>
+</html>`;
+
 const chapterHtml = `
 <html>
   <body>
@@ -88,6 +108,14 @@ const cinderAPI = {
     if (url.includes("?s=spider")) return { status: 200, data: searchHtml, headers: {} };
     if (url.endsWith("/comic/the-spectacular-spider-men-2024/")) return { status: 200, data: detailsHtml, headers: {} };
     if (url.endsWith("/comic/dynamic-comic/")) return { status: 200, data: dynamicDetailsHtml, headers: {} };
+    if (url.endsWith("/comic/absolute-batman-2024/")) return { status: 200, data: absoluteDetailsHtml, headers: {} };
+    const absoluteMatch = url.match(/\/comic\/absolute-batman-2024\/absolute-batman-([0-9]+)\//);
+    if (absoluteMatch) {
+      const issueNumber = Number(absoluteMatch[1]);
+      if (issueNumber >= 1 && issueNumber <= 3) {
+        return { status: 200, data: absoluteIssueHtml(issueNumber), headers: {} };
+      }
+    }
     if (url.endsWith("/comic/the-spectacular-spider-men-2024/the-spectacular-spider-men-7/")) {
       return { status: 200, data: chapterHtml, headers: {} };
     }
@@ -155,7 +183,7 @@ const source = factory(
 
 assert.equal(source.id, "marmota");
 assert.equal(source.name, "Marmota");
-assert.equal(source.version, "0.1.1");
+assert.equal(source.version, "0.1.2");
 assert.equal(source.contentType, "comics");
 assert.equal(source.capabilities.search, true);
 assert.equal(source.capabilities.discover, true);
@@ -195,6 +223,11 @@ const dynamicChapters = await source.getChapters({
 assert.equal(dynamicChapters.length, 2);
 assert.equal(dynamicChapters[0].id, "/comic/dynamic-comic/chapter-1/");
 assert.equal(dynamicChapters[1].id, "/comic/dynamic-comic/chapter-2/");
+
+const probedChapters = await source.getChapters("/comic/absolute-batman-2024/");
+assert.equal(probedChapters.length, 3);
+assert.equal(probedChapters[0].id, "/comic/absolute-batman-2024/absolute-batman-1/");
+assert.equal(probedChapters[2].title, "Absolute Batman #3");
 
 const pages = await source.getPages("/comic/the-spectacular-spider-men-2024/the-spectacular-spider-men-7/");
 assert.equal(pages.length, 2);
