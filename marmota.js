@@ -2,7 +2,7 @@ var Marmota = {};
 
 Marmota.id = "marmota";
 Marmota.name = "Marmota";
-Marmota.version = "0.1.0";
+Marmota.version = "0.1.1";
 Marmota.icon = "M";
 Marmota.description = "Read public Spanish comics from Marmota.";
 Marmota.contentType = "comics";
@@ -94,6 +94,9 @@ Marmota._absUrl = function(value) {
 };
 
 Marmota._pathFromUrl = function(value) {
+  if (value && typeof value === "object") {
+    value = value.id || value.url || (value.extra && (value.extra.id || value.extra.path || value.extra.slug)) || "";
+  }
   var raw = this._decode(String(value || "").trim());
   if (!raw) return "";
   raw = raw.replace(/&amp;/g, "&").split("#")[0].split("?")[0];
@@ -106,6 +109,18 @@ Marmota._pathFromUrl = function(value) {
   if (raw.charAt(0) !== "/") raw = "/" + raw;
   raw = raw.replace(/\/{2,}/g, "/");
   return raw;
+};
+
+Marmota._pathFromHref = function(value, basePath) {
+  var raw = this._decode(String(value || "").trim());
+  if (!raw || raw.charAt(0) === "#" || raw.indexOf("?") === 0) return "";
+  if (/^https?:\/\//i.test(raw) || raw.indexOf("//") === 0 || raw.charAt(0) === "/") {
+    return this._pathFromUrl(raw);
+  }
+
+  var base = this._pathFromUrl(basePath || "/");
+  if (!base.endsWith("/")) base += "/";
+  return this._pathFromUrl(base + raw.replace(/^\.?\//, ""));
 };
 
 Marmota._parts = function(path) {
@@ -126,7 +141,36 @@ Marmota._isChapterPath = function(path) {
 
 Marmota._seriesSlug = function(path) {
   var parts = this._parts(path);
-  return parts.length >= 2 && parts[0] === "comic" ? parts[1] : "";
+  if (parts.length >= 2 && parts[0] === "comic") return parts[1];
+  return "";
+};
+
+Marmota._pathContainsSeries = function(path, seriesSlug) {
+  if (!path || !seriesSlug) return false;
+  var parts = this._parts(path);
+  for (var i = 0; i < parts.length; i += 1) {
+    if (parts[i] === seriesSlug) return true;
+  }
+  return false;
+};
+
+Marmota._isLikelyChapterPath = function(path, seriesPath, seriesSlug) {
+  path = this._pathFromUrl(path);
+  seriesPath = this._pathFromUrl(seriesPath);
+  if (!path || !seriesSlug) return false;
+  if (path === seriesPath || path === seriesPath.replace(/\/$/, "")) return false;
+  if (!this._pathContainsSeries(path, seriesSlug)) return false;
+
+  var parts = this._parts(path);
+  if (parts.length < 2) return false;
+
+  var last = parts[parts.length - 1].toLowerCase();
+  if (!last || last === seriesSlug) return false;
+  if (/^(comments?|comment-page-[0-9]+|feed|rss|attachment|tag|category|genre|genero)$/.test(last)) return false;
+  if (/\.(?:jpg|jpeg|png|webp|avif|gif|svg|css|js)$/i.test(last)) return false;
+
+  if (this._isChapterPath(path) && this._seriesSlug(path) === seriesSlug) return true;
+  return parts.length >= 3;
 };
 
 Marmota._titleFromPath = function(path) {
@@ -158,12 +202,11 @@ Marmota._responseText = function(response) {
   return String(response.data || response.html || response.text || response.body || "");
 };
 
-Marmota._tryFetchText = async function(fetcher, url, headers) {
+Marmota._tryFetchText = async function(fetcher, url, options) {
   try {
-    var response = await fetcher.call(cinder, url, {
-      headers: headers,
-      timeout: 30000,
-    });
+    var requestOptions = options || {};
+    if (!requestOptions.timeout) requestOptions.timeout = 30000;
+    var response = await fetcher.call(cinder, url, requestOptions);
     var data = this._responseText(response);
     var status = response && typeof response.status === "number" ? response.status : 200;
     if (status >= 200 && status < 300 && data && !this._isBlockedHtml(data)) {
@@ -177,20 +220,33 @@ Marmota._tryFetchText = async function(fetcher, url, headers) {
 
 Marmota._fetchText = async function(url, referer) {
   var headers = this._headers(referer || this.BASE_URL + "/");
-  var html = await this._tryFetchText(cinder.fetch, url, headers);
+  var html = await this._tryFetchText(cinder.fetch, url, { headers: headers });
   if (html) return html;
 
   if (typeof cinder.fetchBrowserCaptured === "function") {
-    html = await this._tryFetchText(cinder.fetchBrowserCaptured, url, headers);
+    html = await this._tryFetchText(cinder.fetchBrowserCaptured, url, { headers: headers });
     if (html) return html;
   }
 
   if (typeof cinder.fetchBrowser === "function") {
-    html = await this._tryFetchText(cinder.fetchBrowser, url, headers);
+    html = await this._tryFetchText(cinder.fetchBrowser, url, { headers: headers });
     if (html) return html;
   }
 
   return "";
+};
+
+Marmota._fetchPostText = async function(url, body, referer) {
+  var headers = this._headers(referer || this.BASE_URL + "/", {
+    "Accept": "text/html,application/json,*/*;q=0.8",
+    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "X-Requested-With": "XMLHttpRequest",
+  });
+  return this._tryFetchText(cinder.fetch, url, {
+    method: "POST",
+    headers: headers,
+    body: body,
+  });
 };
 
 Marmota._srcFromSrcset = function(srcset) {
@@ -303,7 +359,7 @@ Marmota._parseComicList = function(html) {
   var results = [];
   var byPath = {};
   var text = String(html || "");
-  var linkRe = /<a\b[^>]*href\s*=\s*(["'])([^"']*\/comic\/[^"']+)\1[^>]*>([\s\S]*?)<\/a>/gi;
+  var linkRe = /<a\b[^>]*href\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a>/gi;
   var match;
   while ((match = linkRe.exec(text)) !== null) {
     var path = this._pathFromUrl(match[2]);
@@ -502,29 +558,32 @@ Marmota.getMangaDetails = async function(id) {
 };
 
 Marmota._chapterNumber = function(title, path, index) {
-  var text = String(title || "") + " " + String(path || "");
-  var matches = text.match(/(?:#|numero|nro|issue|capitulo|chapter|parte|vol\.?)\s*([0-9]+(?:\.[0-9]+)?)/i) ||
-    text.match(/(?:^|[^0-9])([0-9]+(?:\.[0-9]+)?)(?:[^0-9]|$)/);
-  return matches ? parseFloat(matches[1]) : index + 1;
+  var parts = this._parts(path);
+  var last = parts.length ? parts[parts.length - 1] : "";
+  var candidates = [String(title || ""), last.replace(/-/g, " "), String(path || "")];
+  var explicitRe = /(?:#|numero|nro|issue|capitulo|capítulo|chapter|parte|vol\.?)\s*([0-9]+(?:\.[0-9]+)?)/i;
+  var looseRe = /(?:^|[^0-9])([0-9]+(?:\.[0-9]+)?)(?:[^0-9]|$)/;
+  var match;
+  for (var i = 0; i < candidates.length; i += 1) {
+    match = candidates[i].match(explicitRe);
+    if (match) return parseFloat(match[1]);
+  }
+  for (var j = 0; j < candidates.length; j += 1) {
+    match = candidates[j].match(looseRe);
+    if (match) return parseFloat(match[1]);
+  }
+  return index + 1;
 };
 
-Marmota.getChapters = async function(mangaId) {
-  var seriesPath = this._pathFromUrl(mangaId);
-  if (!this._isSeriesPath(seriesPath)) seriesPath = "/comic/" + String(mangaId || "").replace(/^\/+|\/+$/g, "") + "/";
-  var seriesSlug = this._seriesSlug(seriesPath);
-  var url = this._absUrl(seriesPath);
-  var html = await this._fetchText(url, this.BASE_URL + "/");
-  if (!html) return [];
-
+Marmota._parseChaptersFromHtml = function(html, seriesPath, seriesSlug) {
   var chapters = [];
   var seen = {};
-  var linkRe = /<a\b[^>]*href\s*=\s*(["'])([^"']*\/comic\/[^"']+)\1[^>]*>([\s\S]*?)<\/a>/gi;
+  var linkRe = /<a\b[^>]*href\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a>/gi;
   var match;
   var sourceIndex = 0;
-  while ((match = linkRe.exec(html)) !== null) {
-    var path = this._pathFromUrl(match[2]);
-    if (!this._isChapterPath(path)) continue;
-    if (this._seriesSlug(path) !== seriesSlug) continue;
+  while ((match = linkRe.exec(String(html || ""))) !== null) {
+    var path = this._pathFromHref(match[2], seriesPath);
+    if (!this._isLikelyChapterPath(path, seriesPath, seriesSlug)) continue;
     if (seen[path]) continue;
     seen[path] = true;
 
@@ -541,6 +600,80 @@ Marmota.getChapters = async function(mangaId) {
     sourceIndex += 1;
   }
 
+  return chapters;
+};
+
+Marmota._ajaxUrl = function(html) {
+  var source = String(html || "");
+  var patterns = [
+    /["']ajax_url["']\s*:\s*["']([^"']+)["']/i,
+    /["']ajaxUrl["']\s*:\s*["']([^"']+)["']/i,
+    /ajaxurl\s*=\s*["']([^"']+)["']/i,
+    /admin_url["']?\s*:\s*["']([^"']*admin-ajax\.php[^"']*)["']/i,
+    /(https?:\/\/[^"']+\/wp-admin\/admin-ajax\.php)/i,
+    /(\/wp-admin\/admin-ajax\.php)/i,
+  ];
+  for (var i = 0; i < patterns.length; i += 1) {
+    var match = source.match(patterns[i]);
+    if (match && match[1]) return this._absUrl(match[1].replace(/\\\//g, "/"));
+  }
+  return this.BASE_URL + "/wp-admin/admin-ajax.php";
+};
+
+Marmota._mangaPostId = function(html) {
+  var source = String(html || "");
+  var patterns = [
+    /id=["']wp-manga-current-post["'][^>]*value=["']([0-9]+)["']/i,
+    /value=["']([0-9]+)["'][^>]*id=["']wp-manga-current-post["']/i,
+    /data-(?:manga|post)-id=["']([0-9]+)["']/i,
+    /["'](?:manga|post)[_-]?id["']\s*:\s*["']?([0-9]+)/i,
+    /(?:manga|post)[_-]?id\s*=\s*["']?([0-9]+)/i,
+    /post-([0-9]+)/i,
+  ];
+  for (var i = 0; i < patterns.length; i += 1) {
+    var match = source.match(patterns[i]);
+    if (match && match[1]) return match[1];
+  }
+  return "";
+};
+
+Marmota._ajaxPayloadHtml = function(text) {
+  var raw = String(text || "").trim();
+  if (!raw) return "";
+  try {
+    var parsed = JSON.parse(raw);
+    if (typeof parsed === "string") return parsed;
+    if (parsed && typeof parsed.data === "string") return parsed.data;
+    if (parsed && parsed.data && typeof parsed.data.html === "string") return parsed.data.html;
+    if (parsed && parsed.data && typeof parsed.data.content === "string") return parsed.data.content;
+    if (parsed && typeof parsed.html === "string") return parsed.html;
+    if (parsed && typeof parsed.content === "string") return parsed.content;
+  } catch (error) {}
+  return raw;
+};
+
+Marmota._fetchAjaxChaptersHtml = async function(seriesHtml, seriesUrl) {
+  var mangaId = this._mangaPostId(seriesHtml);
+  if (!mangaId) return "";
+
+  var ajaxUrl = this._ajaxUrl(seriesHtml);
+  var bodies = [
+    "action=manga_get_chapters&manga=" + encodeURIComponent(mangaId),
+    "action=manga_get_chapters&manga_id=" + encodeURIComponent(mangaId),
+    "action=wp_manga_get_chapters&manga=" + encodeURIComponent(mangaId),
+    "action=wp_manga_get_chapters&manga_id=" + encodeURIComponent(mangaId),
+  ];
+
+  for (var i = 0; i < bodies.length; i += 1) {
+    var responseText = await this._fetchPostText(ajaxUrl, bodies[i], seriesUrl);
+    var html = this._ajaxPayloadHtml(responseText);
+    if (html && html.indexOf("<a") !== -1) return html;
+  }
+
+  return "";
+};
+
+Marmota._sortChapterList = function(chapters) {
   chapters.sort(function(a, b) {
     if (a.chapterNumber !== b.chapterNumber) return a.chapterNumber - b.chapterNumber;
     return a._sourceIndex - b._sourceIndex;
@@ -554,6 +687,23 @@ Marmota.getChapters = async function(mangaId) {
       url: chapter.url,
     };
   });
+};
+
+Marmota.getChapters = async function(mangaId) {
+  var seriesPath = this._pathFromUrl(mangaId);
+  if (!this._isSeriesPath(seriesPath)) seriesPath = "/comic/" + String(mangaId || "").replace(/^\/+|\/+$/g, "") + "/";
+  var seriesSlug = this._seriesSlug(seriesPath);
+  var url = this._absUrl(seriesPath);
+  var html = await this._fetchText(url, this.BASE_URL + "/");
+  if (!html) return [];
+
+  var chapters = this._parseChaptersFromHtml(html, seriesPath, seriesSlug);
+  if (chapters.length === 0) {
+    var ajaxHtml = await this._fetchAjaxChaptersHtml(html, url);
+    if (ajaxHtml) chapters = this._parseChaptersFromHtml(ajaxHtml, seriesPath, seriesSlug);
+  }
+
+  return this._sortChapterList(chapters);
 };
 
 Marmota._imageDimensionsTooSmall = function(tag) {

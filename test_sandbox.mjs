@@ -47,6 +47,24 @@ const detailsHtml = `
   </body>
 </html>`;
 
+const dynamicDetailsHtml = `
+<html>
+  <body class="post-4321">
+    <h1>Dynamic Comic</h1>
+    <input type="hidden" id="wp-manga-current-post" value="4321">
+    <script>
+      window.manga = {"ajax_url":"https:\/\/marmota.me\/wp-admin\/admin-ajax.php"};
+    </script>
+    <div class="listing-chapters_wrap"></div>
+  </body>
+</html>`;
+
+const dynamicAjaxHtml = `
+<ul class="main version-chap">
+  <li><a href="chapter-2/">Chapter 2</a></li>
+  <li><a href="/comic/dynamic-comic/chapter-1/">Chapter 1</a></li>
+</ul>`;
+
 const chapterHtml = `
 <html>
   <body>
@@ -60,9 +78,16 @@ const chapterHtml = `
 </html>`;
 
 const cinderAPI = {
-  async fetch(url) {
+  async fetch(url, options = {}) {
+    if (options.method === "POST" && url.endsWith("/wp-admin/admin-ajax.php")) {
+      if (String(options.body || "").includes("manga_get_chapters") && String(options.body || "").includes("4321")) {
+        return { status: 200, data: dynamicAjaxHtml, headers: {} };
+      }
+      return { status: 404, data: "", headers: {} };
+    }
     if (url.includes("?s=spider")) return { status: 200, data: searchHtml, headers: {} };
     if (url.endsWith("/comic/the-spectacular-spider-men-2024/")) return { status: 200, data: detailsHtml, headers: {} };
+    if (url.endsWith("/comic/dynamic-comic/")) return { status: 200, data: dynamicDetailsHtml, headers: {} };
     if (url.endsWith("/comic/the-spectacular-spider-men-2024/the-spectacular-spider-men-7/")) {
       return { status: 200, data: chapterHtml, headers: {} };
     }
@@ -130,7 +155,7 @@ const source = factory(
 
 assert.equal(source.id, "marmota");
 assert.equal(source.name, "Marmota");
-assert.equal(source.version, "0.1.0");
+assert.equal(source.version, "0.1.1");
 assert.equal(source.contentType, "comics");
 assert.equal(source.capabilities.search, true);
 assert.equal(source.capabilities.discover, true);
@@ -162,6 +187,14 @@ const chapters = await source.getChapters("/comic/the-spectacular-spider-men-202
 assert.equal(chapters.length, 2);
 assert.equal(chapters[0].title, "The Spectacular Spider-Men 1");
 assert.equal(chapters[1].title, "The Spectacular Spider-Men 7");
+
+const dynamicChapters = await source.getChapters({
+  id: "/comic/dynamic-comic/",
+  url: "https://marmota.me/comic/dynamic-comic/",
+});
+assert.equal(dynamicChapters.length, 2);
+assert.equal(dynamicChapters[0].id, "/comic/dynamic-comic/chapter-1/");
+assert.equal(dynamicChapters[1].id, "/comic/dynamic-comic/chapter-2/");
 
 const pages = await source.getPages("/comic/the-spectacular-spider-men-2024/the-spectacular-spider-men-7/");
 assert.equal(pages.length, 2);
