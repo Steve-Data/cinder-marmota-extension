@@ -1,0 +1,22 @@
+{
+  "name": "Steve's Cinder Extensions",
+  "author": "Steve",
+  "extensions": [
+    {
+      "id": "marmota",
+      "name": "Marmota",
+      "version": "0.1.0",
+      "description": "Read public Spanish comics from Marmota.",
+      "contentType": "comics",
+      "scriptUrl": "https://raw.githubusercontent.com/Steve-Data/cinder-marmota-extension/main/marmota.js",
+      "minCinderVersion": "2.0.0",
+      "contentTypes": [
+        "comic"
+      ],
+      "contentSubtypes": [
+        "westernComic",
+        "spanish"
+      ]
+    }
+  ]
+}
