@@ -2,7 +2,7 @@ var Marmota = {};
 
 Marmota.id = "marmota";
 Marmota.name = "Marmota";
-Marmota.version = "0.1.2";
+Marmota.version = "0.1.3";
 Marmota.icon = "M";
 Marmota.description = "Read public Spanish comics from Marmota.";
 Marmota.contentType = "comics";
@@ -88,6 +88,7 @@ Marmota._absUrl = function(value) {
   var raw = this._decode(String(value || "").trim());
   if (!raw || /^data:/i.test(raw) || /^javascript:/i.test(raw)) return "";
   if (raw.indexOf("//") === 0) return "https:" + raw;
+  if (/^http:\/\/(?:www\.)?marmota\.me/i.test(raw)) return raw.replace(/^http:/i, "https:");
   if (/^https?:\/\//i.test(raw)) return raw;
   if (raw.charAt(0) === "/") return this.BASE_URL + raw;
   return this.BASE_URL + "/" + raw.replace(/^\/+/, "");
@@ -114,6 +115,7 @@ Marmota._pathFromUrl = function(value) {
 Marmota._pathFromHref = function(value, basePath) {
   var raw = this._decode(String(value || "").trim());
   if (!raw || raw.charAt(0) === "#" || raw.indexOf("?") === 0) return "";
+  if (/^(?:javascript|mailto|tel|sms):/i.test(raw)) return "";
   if (/^https?:\/\//i.test(raw) || raw.indexOf("//") === 0 || raw.charAt(0) === "/") {
     return this._pathFromUrl(raw);
   }
@@ -731,11 +733,25 @@ Marmota._chapterTitleFromHtml = function(html, fallback) {
   return title || fallback;
 };
 
-Marmota._isIssuePageHtml = function(html, seriesSlug, number) {
+Marmota._canonicalPathFromHtml = function(html) {
+  var linkRe = /<link\b[\s\S]*?>/gi;
+  var match;
+  while ((match = linkRe.exec(String(html || ""))) !== null) {
+    if (String(this._attr(match[0], "rel") || "").toLowerCase() !== "canonical") continue;
+    var href = this._attr(match[0], "href");
+    if (href) return this._pathFromUrl(href);
+  }
+  return "";
+};
+
+Marmota._isIssuePageHtml = function(html, seriesSlug, number, expectedPath) {
   var text = String(html || "").toLowerCase();
   if (!text) return false;
   if (this._isBlockedHtml(text)) return false;
   var baseSlug = this._seriesBaseSlug(seriesSlug).toLowerCase();
+  var numberText = String(number);
+  var padded2 = numberText.length === 1 ? "0" + numberText : numberText;
+  var padded3 = numberText.length === 1 ? "00" + numberText : (numberText.length === 2 ? "0" + numberText : numberText);
   var seriesNeedles = [
     String(seriesSlug || "").toLowerCase(),
     baseSlug,
@@ -754,15 +770,67 @@ Marmota._isIssuePageHtml = function(html, seriesSlug, number) {
     return false;
   }
   var title = this._chapterTitleFromHtml(html, "").toLowerCase();
-  var numberText = String(number);
-  return title.indexOf("#" + numberText) !== -1 ||
-    new RegExp("(?:^|[^0-9])" + numberText + "(?:[^0-9]|$)").test(title) ||
+  var slugNumberMarkers = [
+    baseSlug + "-" + numberText,
+    baseSlug + "-" + padded2,
+    baseSlug + "-" + padded3,
+    String(seriesSlug || "").toLowerCase() + "-" + numberText,
+    String(seriesSlug || "").toLowerCase() + "-" + padded2,
+    String(seriesSlug || "").toLowerCase() + "-" + padded3,
+  ];
+  var hasSlugNumber = false;
+  for (var j = 0; j < slugNumberMarkers.length; j += 1) {
+    if (slugNumberMarkers[j] && text.indexOf(slugNumberMarkers[j]) !== -1) {
+      hasSlugNumber = true;
+      break;
+    }
+  }
+
+  var titleHasNumber = title.indexOf("#" + numberText) !== -1 ||
+    new RegExp("(?:^|[^0-9])" + numberText + "(?:[^0-9]|$)").test(title);
+  var canonicalPath = this._canonicalPathFromHtml(html);
+  var wantedPath = this._pathFromUrl(expectedPath || "");
+  var canonicalMatchesExpected = !!wantedPath && canonicalPath === wantedPath;
+  var hasPageImages = text.indexOf("wp-manga-chapter-img") !== -1;
+  var hasReaderMarker = text.indexOf("wp-manga-chapter-img") !== -1 ||
+    text.indexOf("reading-manga") !== -1 ||
+    text.indexOf("next_page") !== -1 ||
+    text.indexOf("prev_page") !== -1 ||
+    text.indexOf("chapter-nav") !== -1 ||
     text.indexOf("rel=\"next\"") !== -1 ||
     text.indexOf("rel='next'") !== -1 ||
     text.indexOf("> next <") !== -1 ||
     text.indexOf(">next<") !== -1 ||
     text.indexOf("> prev <") !== -1 ||
     text.indexOf(">prev<") !== -1;
+
+  return hasPageImages && (
+    canonicalMatchesExpected ||
+    (hasReaderMarker && (titleHasNumber || hasSlugNumber))
+  );
+};
+
+Marmota._probeNumberedChapter = async function(seriesPath, seriesSlug, number) {
+  var paths = this._candidateIssuePaths(seriesPath, seriesSlug, number);
+  for (var i = 0; i < paths.length; i += 1) {
+    var url = this._absUrl(paths[i]);
+    var html = await this._fetchText(url, this._absUrl(seriesPath));
+    if (this._isIssuePageHtml(html, seriesSlug, number, paths[i])) {
+      var fallbackTitle = this._titleFromPath(paths[i]);
+      var chapterTitle = this._chapterTitleFromHtml(html, fallbackTitle);
+      if (this._chapterNumber(chapterTitle, "", number - 1) !== number) {
+        chapterTitle = fallbackTitle;
+      }
+      return {
+        id: this._pathFromUrl(paths[i]),
+        title: chapterTitle,
+        chapterNumber: number,
+        url: url,
+        _sourceIndex: number,
+      };
+    }
+  }
+  return null;
 };
 
 Marmota._probeNumberedChapters = async function(seriesPath, seriesSlug) {
@@ -770,30 +838,23 @@ Marmota._probeNumberedChapters = async function(seriesPath, seriesSlug) {
   var maxMisses = 4;
   var misses = 0;
   var maxNumber = 80;
+  var batchSize = 4;
 
-  for (var number = 1; number <= maxNumber && misses < maxMisses; number += 1) {
-    var paths = this._candidateIssuePaths(seriesPath, seriesSlug, number);
-    var found = null;
-    for (var i = 0; i < paths.length; i += 1) {
-      var url = this._absUrl(paths[i]);
-      var html = await this._fetchText(url, this._absUrl(seriesPath));
-      if (this._isIssuePageHtml(html, seriesSlug, number)) {
-        found = {
-          id: this._pathFromUrl(paths[i]),
-          title: this._chapterTitleFromHtml(html, this._titleFromPath(paths[i])),
-          chapterNumber: number,
-          url: url,
-          _sourceIndex: chapters.length,
-        };
-        break;
-      }
+  for (var start = 1; start <= maxNumber && misses < maxMisses; start += batchSize) {
+    var tasks = [];
+    for (var number = start; number < start + batchSize && number <= maxNumber; number += 1) {
+      tasks.push(this._probeNumberedChapter(seriesPath, seriesSlug, number));
     }
 
-    if (found) {
-      chapters.push(found);
-      misses = 0;
-    } else {
-      misses += 1;
+    var results = await Promise.all(tasks);
+    for (var i = 0; i < results.length; i += 1) {
+      if (results[i]) {
+        chapters.push(results[i]);
+        misses = 0;
+      } else {
+        misses += 1;
+        if (misses >= maxMisses) break;
+      }
     }
   }
 
