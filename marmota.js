@@ -2,7 +2,7 @@ var Marmota = {};
 
 Marmota.id = "marmota";
 Marmota.name = "Marmota";
-Marmota.version = "0.1.3";
+Marmota.version = "0.1.4";
 Marmota.icon = "M";
 Marmota.description = "Read public Spanish comics from Marmota.";
 Marmota.contentType = "comics";
@@ -190,6 +190,28 @@ Marmota._seriesBaseSlug = function(seriesSlug) {
   return slug.replace(/-(?:19|20)[0-9]{2}$/i, "");
 };
 
+Marmota._seriesIssuePrefixes = function(seriesSlug) {
+  var prefixes = [];
+  var seen = {};
+  var add = function(value) {
+    value = String(value || "").replace(/^-+|-+$/g, "");
+    if (!value || seen[value]) return;
+    seen[value] = true;
+    prefixes.push(value);
+  };
+
+  var base = this._seriesBaseSlug(seriesSlug);
+  var originals = [base, seriesSlug];
+  for (var i = 0; i < originals.length; i += 1) {
+    add(originals[i]);
+    add(String(originals[i] || "").replace(/-v([0-9]+)(?=$|-)/ig, "-vol-$1"));
+    add(String(originals[i] || "").replace(/-vol-([0-9]+)(?=$|-)/ig, "-v$1"));
+    add(String(originals[i] || "").replace(/-volume-([0-9]+)(?=$|-)/ig, "-vol-$1"));
+  }
+
+  return prefixes;
+};
+
 Marmota._isBlockedHtml = function(html) {
   var text = String(html || "").toLowerCase();
   if (!text) return true;
@@ -310,6 +332,8 @@ Marmota._isJunkImage = function(url) {
     text.indexOf("tracking") !== -1 ||
     text.indexOf("pixel") !== -1 ||
     text.indexOf("placeholder") !== -1 ||
+    text.indexOf("flyer") !== -1 ||
+    text.indexOf("jokerwantsyou") !== -1 ||
     text.indexOf("loading") !== -1 ||
     text.indexOf("spinner") !== -1;
 };
@@ -697,10 +721,7 @@ Marmota._sortChapterList = function(chapters) {
 };
 
 Marmota._candidateIssuePaths = function(seriesPath, seriesSlug, number) {
-  var base = this._seriesBaseSlug(seriesSlug);
-  var prefixes = [];
-  if (base) prefixes.push(base);
-  if (seriesSlug && seriesSlug !== base) prefixes.push(seriesSlug);
+  var prefixes = this._seriesIssuePrefixes(seriesSlug);
 
   var paths = [];
   var seen = {};

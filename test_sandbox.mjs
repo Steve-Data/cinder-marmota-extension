@@ -75,6 +75,14 @@ const absoluteDetailsHtml = `
   </body>
 </html>`;
 
+const batmanV4DetailsHtml = `
+<html>
+  <body>
+    <h1>Batman Vol. 4 (2025)</h1>
+    <p>This series uses issue URLs with vol in the chapter slug.</p>
+  </body>
+</html>`;
+
 const absoluteIssueHtml = (number) => `
 <html>
   <head>
@@ -88,6 +96,18 @@ const absoluteIssueHtml = (number) => `
   </body>
 </html>`;
 
+const batmanV4IssueHtml = (number) => `
+<html>
+  <head>
+    <title>Batman Vol. 4 (2025) - Marmota Comics</title>
+    <link rel="canonical" href="https://marmota.me/comic/batman-v4-2025/batman-vol-4-${number}/">
+  </head>
+  <body>
+    <h1>Batman Vol. 4 (2025)</h1>
+    <img class="wp-manga-chapter-img img-responsive lazyload" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/batman-v4/${number}/001.jpg">
+  </body>
+</html>`;
+
 const chapterHtml = `
 <html>
   <body>
@@ -96,6 +116,8 @@ const chapterHtml = `
     <div class="reading-content">
       <div class="page-break"><img class="wp-manga-chapter-img" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/001.webp" width="1200" height="1800"></div>
       <div class="page-break"><img class="wp-manga-chapter-img" srcset="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/002-small.webp 600w, https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/002.webp 1200w" width="1200" height="1800"></div>
+      <div class="page-break"><img class="wp-manga-chapter-img" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/zATK-KJ-flyer.jpg" width="1200" height="1800"></div>
+      <div class="page-break"><img class="wp-manga-chapter-img" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/zzJokerWantsYou.jpg" width="1200" height="1800"></div>
     </div>
   </body>
 </html>`;
@@ -112,11 +134,19 @@ const cinderAPI = {
     if (url.endsWith("/comic/the-spectacular-spider-men-2024/")) return { status: 200, data: detailsHtml, headers: {} };
     if (url.endsWith("/comic/dynamic-comic/")) return { status: 200, data: dynamicDetailsHtml, headers: {} };
     if (url.endsWith("/comic/absolute-batman-2024/")) return { status: 200, data: absoluteDetailsHtml, headers: {} };
+    if (url.endsWith("/comic/batman-v4-2025/")) return { status: 200, data: batmanV4DetailsHtml, headers: {} };
     const absoluteMatch = url.match(/\/comic\/absolute-batman-2024\/absolute-batman-([0-9]+)\//);
     if (absoluteMatch) {
       const issueNumber = Number(absoluteMatch[1]);
       if (issueNumber >= 1 && issueNumber <= 3) {
         return { status: 200, data: absoluteIssueHtml(issueNumber), headers: {} };
+      }
+    }
+    const batmanV4Match = url.match(/\/comic\/batman-v4-2025\/batman-vol-4-([0-9]+)\//);
+    if (batmanV4Match) {
+      const issueNumber = Number(batmanV4Match[1]);
+      if (issueNumber >= 1 && issueNumber <= 2) {
+        return { status: 200, data: batmanV4IssueHtml(issueNumber), headers: {} };
       }
     }
     if (url.endsWith("/comic/the-spectacular-spider-men-2024/the-spectacular-spider-men-7/")) {
@@ -186,7 +216,7 @@ const source = factory(
 
 assert.equal(source.id, "marmota");
 assert.equal(source.name, "Marmota");
-assert.equal(source.version, "0.1.3");
+assert.equal(source.version, "0.1.4");
 assert.equal(source.contentType, "comics");
 assert.equal(source.capabilities.search, true);
 assert.equal(source.capabilities.discover, true);
@@ -231,6 +261,11 @@ const probedChapters = await source.getChapters("/comic/absolute-batman-2024/");
 assert.equal(probedChapters.length, 3);
 assert.equal(probedChapters[0].id, "/comic/absolute-batman-2024/absolute-batman-1/");
 assert.equal(probedChapters[2].title, "Absolute Batman 3");
+
+const batmanV4Chapters = await source.getChapters("/comic/batman-v4-2025/");
+assert.equal(batmanV4Chapters.length, 2);
+assert.equal(batmanV4Chapters[0].id, "/comic/batman-v4-2025/batman-vol-4-1/");
+assert.equal(batmanV4Chapters[1].id, "/comic/batman-v4-2025/batman-vol-4-2/");
 
 const pages = await source.getPages("/comic/the-spectacular-spider-men-2024/the-spectacular-spider-men-7/");
 assert.equal(pages.length, 2);
