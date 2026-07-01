@@ -5,7 +5,7 @@
     {
       "id": "marmota",
       "name": "Marmota",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "description": "Read public Spanish comics from Marmota.",
       "contentType": "comics",
       "scriptUrl": "https://raw.githubusercontent.com/Steve-Data/cinder-marmota-extension/main/marmota.js",

@@ -83,6 +83,14 @@ const batmanV4DetailsHtml = `
   </body>
 </html>`;
 
+const nightwingDetailsHtml = `
+<html>
+  <body>
+    <h1>Nightwing (2016)</h1>
+    <img src="https://marmota.me/wp-content/uploads/2022/06/Nightwing-078-001.jpg" alt="Nightwing">
+  </body>
+</html>`;
+
 const absoluteIssueHtml = (number) => `
 <html>
   <head>
@@ -108,6 +116,18 @@ const batmanV4IssueHtml = (number) => `
   </body>
 </html>`;
 
+const nightwingIssueHtml = (number) => `
+<html>
+  <head>
+    <title>Nightwing (2016) - Marmota Comics</title>
+    <link rel="canonical" href="https://marmota.me/comic/nightwing-2016/nightwing-${number}/">
+  </head>
+  <body>
+    <h1>Nightwing (2016)</h1>
+    <img class="wp-manga-chapter-img img-responsive lazyload" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/nightwing/${number}/001.jpg">
+  </body>
+</html>`;
+
 const chapterHtml = `
 <html>
   <body>
@@ -117,7 +137,10 @@ const chapterHtml = `
       <div class="page-break"><img class="wp-manga-chapter-img" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/001.webp" width="1200" height="1800"></div>
       <div class="page-break"><img class="wp-manga-chapter-img" srcset="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/002-small.webp 600w, https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/002.webp 1200w" width="1200" height="1800"></div>
       <div class="page-break"><img class="wp-manga-chapter-img" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/zATK-KJ-flyer.jpg" width="1200" height="1800"></div>
+      <div class="page-break"><img class="wp-manga-chapter-img" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/ZATK-Knight-Jimz.jpg" width="1200" height="1800"></div>
       <div class="page-break"><img class="wp-manga-chapter-img" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/zzJokerWantsYou.jpg" width="1200" height="1800"></div>
+      <div class="page-break"><img class="wp-manga-chapter-img" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/zzz_at_comics.jpg" width="1200" height="1800"></div>
+      <div class="page-break"><img class="wp-manga-chapter-img" data-src="https://marmota.me/wp-content/uploads/WP-manga/data/spider/007/zzBatsTeNecesita.jpg" width="1200" height="1800"></div>
     </div>
   </body>
 </html>`;
@@ -135,6 +158,7 @@ const cinderAPI = {
     if (url.endsWith("/comic/dynamic-comic/")) return { status: 200, data: dynamicDetailsHtml, headers: {} };
     if (url.endsWith("/comic/absolute-batman-2024/")) return { status: 200, data: absoluteDetailsHtml, headers: {} };
     if (url.endsWith("/comic/batman-v4-2025/")) return { status: 200, data: batmanV4DetailsHtml, headers: {} };
+    if (url.endsWith("/comic/nightwing-2016/")) return { status: 200, data: nightwingDetailsHtml, headers: {} };
     const absoluteMatch = url.match(/\/comic\/absolute-batman-2024\/absolute-batman-([0-9]+)\//);
     if (absoluteMatch) {
       const issueNumber = Number(absoluteMatch[1]);
@@ -147,6 +171,13 @@ const cinderAPI = {
       const issueNumber = Number(batmanV4Match[1]);
       if (issueNumber >= 1 && issueNumber <= 2) {
         return { status: 200, data: batmanV4IssueHtml(issueNumber), headers: {} };
+      }
+    }
+    const nightwingMatch = url.match(/\/comic\/nightwing-2016\/nightwing-([0-9]+)\//);
+    if (nightwingMatch) {
+      const issueNumber = Number(nightwingMatch[1]);
+      if (issueNumber === 50 || (issueNumber >= 78 && issueNumber <= 81)) {
+        return { status: 200, data: nightwingIssueHtml(issueNumber), headers: {} };
       }
     }
     if (url.endsWith("/comic/the-spectacular-spider-men-2024/the-spectacular-spider-men-7/")) {
@@ -216,7 +247,7 @@ const source = factory(
 
 assert.equal(source.id, "marmota");
 assert.equal(source.name, "Marmota");
-assert.equal(source.version, "0.1.4");
+assert.equal(source.version, "0.1.5");
 assert.equal(source.contentType, "comics");
 assert.equal(source.capabilities.search, true);
 assert.equal(source.capabilities.discover, true);
@@ -266,6 +297,12 @@ const batmanV4Chapters = await source.getChapters("/comic/batman-v4-2025/");
 assert.equal(batmanV4Chapters.length, 2);
 assert.equal(batmanV4Chapters[0].id, "/comic/batman-v4-2025/batman-vol-4-1/");
 assert.equal(batmanV4Chapters[1].id, "/comic/batman-v4-2025/batman-vol-4-2/");
+
+const nightwingChapters = await source.getChapters("/comic/nightwing-2016/");
+assert.equal(nightwingChapters.length, 5);
+assert.deepEqual(nightwingChapters.map((chapter) => chapter.chapterNumber), [50, 78, 79, 80, 81]);
+assert.equal(nightwingChapters[0].id, "/comic/nightwing-2016/nightwing-50/");
+assert.equal(nightwingChapters[1].id, "/comic/nightwing-2016/nightwing-78/");
 
 const pages = await source.getPages("/comic/the-spectacular-spider-men-2024/the-spectacular-spider-men-7/");
 assert.equal(pages.length, 2);

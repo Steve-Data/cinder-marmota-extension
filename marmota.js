@@ -2,7 +2,7 @@ var Marmota = {};
 
 Marmota.id = "marmota";
 Marmota.name = "Marmota";
-Marmota.version = "0.1.4";
+Marmota.version = "0.1.5";
 Marmota.icon = "M";
 Marmota.description = "Read public Spanish comics from Marmota.";
 Marmota.contentType = "comics";
@@ -212,6 +212,52 @@ Marmota._seriesIssuePrefixes = function(seriesSlug) {
   return prefixes;
 };
 
+Marmota._seriesSeedBases = function(seriesSlug) {
+  var bases = [];
+  var seen = {};
+  var add = function(value) {
+    value = String(value || "").toLowerCase().replace(/^-+|-+$/g, "");
+    if (!value || seen[value]) return;
+    seen[value] = true;
+    bases.push(value);
+  };
+
+  var base = this._seriesBaseSlug(seriesSlug);
+  add(base);
+  add(seriesSlug);
+  add(base.replace(/-(?:v|vol|volume)-[0-9]+$/i, ""));
+  add(String(seriesSlug || "").replace(/-(?:v|vol|volume)-[0-9]+-(?:19|20)[0-9]{2}$/i, ""));
+  return bases;
+};
+
+Marmota._seriesSeedNumbersFromHtml = function(html, seriesSlug) {
+  var text = String(html || "").toLowerCase();
+  var seeds = [];
+  var seen = {};
+  var bases = this._seriesSeedBases(seriesSlug);
+
+  var add = function(value) {
+    var number = parseInt(value, 10);
+    if (!number || number < 1 || number > 300 || seen[number]) return;
+    seen[number] = true;
+    seeds.push(number);
+  };
+
+  for (var i = 0; i < bases.length; i += 1) {
+    var escaped = bases[i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/-/g, "[-_ ]");
+    var re = new RegExp(escaped + "[-_ ]+([0-9]{1,3})(?=[-_ .(]|$)", "gi");
+    var match;
+    while ((match = re.exec(text)) !== null) {
+      add(match[1]);
+    }
+  }
+
+  seeds.sort(function(a, b) {
+    return a - b;
+  });
+  return seeds;
+};
+
 Marmota._isBlockedHtml = function(html) {
   var text = String(html || "").toLowerCase();
   if (!text) return true;
@@ -326,14 +372,17 @@ Marmota._isJunkImage = function(url) {
     text.indexOf("avatar") !== -1 ||
     text.indexOf("icon") !== -1 ||
     text.indexOf("banner") !== -1 ||
+    /(?:^|\/)zz[a-z0-9_-]*\.(?:jpg|jpeg|png|webp)(?:[?#]|$)/i.test(text) ||
     /(?:^|[\/._-])ads?(?:[\/._-]|$)/i.test(text) ||
     text.indexOf("/ad/") !== -1 ||
     text.indexOf("doubleclick") !== -1 ||
     text.indexOf("tracking") !== -1 ||
     text.indexOf("pixel") !== -1 ||
     text.indexOf("placeholder") !== -1 ||
+    text.indexOf("zatk") !== -1 ||
     text.indexOf("flyer") !== -1 ||
     text.indexOf("jokerwantsyou") !== -1 ||
+    text.indexOf("zzz_at_comics") !== -1 ||
     text.indexOf("loading") !== -1 ||
     text.indexOf("spinner") !== -1;
 };
@@ -854,27 +903,55 @@ Marmota._probeNumberedChapter = async function(seriesPath, seriesSlug, number) {
   return null;
 };
 
-Marmota._probeNumberedChapters = async function(seriesPath, seriesSlug) {
+Marmota._probeNumberedChapters = async function(seriesPath, seriesSlug, seedNumbers) {
   var chapters = [];
   var maxMisses = 4;
-  var misses = 0;
   var maxNumber = 80;
   var batchSize = 4;
+  var seenNumbers = {};
+  var starts = [];
+  var seenStarts = {};
+  var seeds = seedNumbers || [];
 
-  for (var start = 1; start <= maxNumber && misses < maxMisses; start += batchSize) {
-    var tasks = [];
-    for (var number = start; number < start + batchSize && number <= maxNumber; number += 1) {
-      tasks.push(this._probeNumberedChapter(seriesPath, seriesSlug, number));
-    }
+  var addStart = function(value) {
+    value = parseInt(value, 10);
+    if (!value || value < 1) value = 1;
+    if (seenStarts[value]) return;
+    seenStarts[value] = true;
+    starts.push(value);
+  };
 
-    var results = await Promise.all(tasks);
-    for (var i = 0; i < results.length; i += 1) {
-      if (results[i]) {
-        chapters.push(results[i]);
-        misses = 0;
-      } else {
-        misses += 1;
-        if (misses >= maxMisses) break;
+  addStart(1);
+  for (var s = 0; s < seeds.length; s += 1) {
+    maxNumber = Math.max(maxNumber, seeds[s] + 80);
+    addStart(seeds[s] - maxMisses + 1);
+    if (seeds[s] > 40) addStart(seeds[s] - 30);
+  }
+
+  starts.sort(function(a, b) {
+    return a - b;
+  });
+
+  for (var range = 0; range < starts.length; range += 1) {
+    var misses = 0;
+    for (var start = starts[range]; start <= maxNumber && misses < maxMisses; start += batchSize) {
+      var tasks = [];
+      for (var number = start; number < start + batchSize && number <= maxNumber; number += 1) {
+        tasks.push(this._probeNumberedChapter(seriesPath, seriesSlug, number));
+      }
+
+      var results = await Promise.all(tasks);
+      for (var i = 0; i < results.length; i += 1) {
+        if (results[i]) {
+          if (!seenNumbers[results[i].chapterNumber]) {
+            chapters.push(results[i]);
+            seenNumbers[results[i].chapterNumber] = true;
+          }
+          misses = 0;
+        } else {
+          misses += 1;
+          if (misses >= maxMisses) break;
+        }
       }
     }
   }
@@ -896,7 +973,7 @@ Marmota.getChapters = async function(mangaId) {
     if (ajaxHtml) chapters = this._parseChaptersFromHtml(ajaxHtml, seriesPath, seriesSlug);
   }
   if (chapters.length === 0) {
-    chapters = await this._probeNumberedChapters(seriesPath, seriesSlug);
+    chapters = await this._probeNumberedChapters(seriesPath, seriesSlug, this._seriesSeedNumbersFromHtml(html, seriesSlug));
   }
 
   return this._sortChapterList(chapters);
